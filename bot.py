@@ -1,4 +1,4 @@
-import requests, time, os
+import requests, time, os, traceback
 from flask import Flask
 import threading
 
@@ -11,95 +11,52 @@ jogos_avisados = set()
 
 def enviar_telegram(time_casa, time_fora, placar, minuto, time_cartao, tipo, liga_nome):
     tag = f"[{liga_nome}]" if liga_nome else ""
-    if tipo == "VERMELHO":
-        icone = "🔴 RED CARD!"
-        msg_topo = f"{time_cartao} ficou com 10 jogadores!"
-    else:
-        icone = "🟨 AMARELO!"
-        msg_topo = f"Teste OK! Cartão para {time_cartao}"
-
-    try:
-        gols_casa, gols_fora = map(int, placar.lower().replace('x','-').split('-'))
-        total_gols = gols_casa + gols_fora
-    except:
-        total_gols = 0
-
-    time_com_10 = time_cartao
-    time_com_11 = time_fora if time_casa == time_com_10 else time_casa
-
-    if total_gols == 0:
-        oportunidades = [f"- {time_com_11} vence (tem 1 a mais)", "- Over 0.5 Gols", "- Over 1.5 Gols"]
-    elif total_gols == 1:
-        oportunidades = [f"- Over 1.5 Gols", f"- Próximo gol: {time_com_11}", f"- {time_com_11} vence"]
-    elif total_gols == 2:
-        oportunidades = [f"- Over 2.5 Gols", f"- Ambos marcam? SIM", f"- Próximo gol: {time_com_11}"]
-    else:
-        oportunidades = [f"- Over {total_gols + 0.5} Gols", f"- Próximo gol: {time_com_11}", f"- Over escanteios"]
-
-    lista_oportunidades = "\n".join(oportunidades)
-    texto = f"""{icone} {tag} {time_casa} {placar} {time_fora} ({minuto}')
-{msg_topo}
-
-💰 OPORTUNIDADES AO VIVO:
-{lista_oportunidades}"""
-
+    icone = "🔴 RED CARD!" if tipo == "VERMELHO" else "🟨 AMARELO!"
+    texto = f"{icone} {tag} {time_casa} {placar} {time_fora} ({minuto}')\n{time_cartao} - {tipo}"
     try:
         requests.post(TELEGRAM_URL, data={"chat_id": CHAT_ID, "text": texto}, timeout=10)
-        print(f"Enviado: {texto}")
+        print(f"ENVIADO: {texto}", flush=True)
     except Exception as e:
-        print(f"Erro telegram: {e}")
+        print(f"Erro telegram: {e}", flush=True)
 
 def verificar_jogos():
-    print(">>> BOT INICIADO - VERIFICANDO JOGOS <<<")
+    print(">>> BOT INICIADO - VERIFICANDO JOGOS <<<", flush=True)
     url = "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard"
     while True:
         try:
-            r = requests.get(url, timeout=15).json()
-            events = r.get("events", [])
-            print(f"Encontrados {len(events)} eventos totais, verificando ao vivo...")
+            print("Tentando buscar na ESPN...", flush=True)
+            r = requests.get(url, timeout=20)
+            print(f"ESPN status: {r.status_code}", flush=True)
+            data = r.json()
+            events = data.get("events", [])
+            print(f"Encontrados {len(events)} eventos totais", flush=True)
+
+            achou_ao_vivo = 0
             for event in events:
-                if event.get("status", {}).get("type", {}).get("state")!= "in":
+                state = event.get("status", {}).get("type", {}).get("state")
+                if state!= "in":
                     continue
+                achou_ao_vivo += 1
                 comp_data = event.get("competitions", [{}])[0]
                 liga_nome = comp_data.get("type", {}).get("name") or "ALL"
-                event_id = f"{liga_nome}_{event.get('id')}"
                 comps = comp_data.get("competitors", [])
                 if len(comps) < 2: continue
                 time_casa = comps[0].get("team", {}).get("displayName", "Casa")
                 time_fora = comps[1].get("team", {}).get("displayName", "Fora")
-                placar = f"{comps[0].get('score','0')}x{comps[1].get('score','0')}"
-                minuto = event.get("status", {}).get("displayClock", "0'")
-                print(f"JOGO AO VIVO: {liga_nome} - {time_casa} {placar} {time_fora}")
+                print(f"AO VIVO: {liga_nome} - {time_casa} x {time_fora}", flush=True)
 
-                for ct in comps:
-                    team_name = ct.get("team", {}).get("displayName", "")
-                    yellow = int(ct.get("yellowCards", 0) or 0)
-                    red = int(ct.get("redCards", 0) or 0)
-                    has_red = ct.get("hasRedCard", False)
-                    print(f" -> {team_name}: amarelo={yellow} vermelho={red} has_red={has_red}")
-                    tipo = None
-                    if has_red or red > 0: tipo = "VERMELHO"
-                    elif yellow > 0: tipo = "AMARELO"
-                    if tipo:
-                        game_key = f"{event_id}_{team_name}_{tipo}_{yellow}_{red}"
-                        if game_key not in jogos_avisados:
-                            enviar_telegram(time_casa, time_fora, placar, minuto, team_name, tipo, liga_nome)
-                            jogos_avisados.add(game_key)
-                            if tipo == "AMARELO":
-                                for i in range(1, 10):
-                                    jogos_avisados.add(f"{event_id}_{team_name}_AMARELO_{i}_0")
-            print("Verificado TODAS as ligas... 15s")
+            print(f"Total ao vivo agora: {achou_ao_vivo} | Aguardando 15s...", flush=True)
             time.sleep(15)
         except Exception as e:
-            print(f"Erro geral: {e}")
+            print(f"ERRO CRITICO NO LOOP: {e}", flush=True)
+            traceback.print_exc()
             time.sleep(20)
 
-# === ISSO AQUI É A CORREÇÃO - INICIA FORA DO MAIN ===
 threading.Thread(target=verificar_jogos, daemon=True).start()
 
 @app.route("/")
 def home():
-    return "Bot ON - Todas as ligas + separa jogos iguais + over inteligente"
+    return "Bot ON - Debug"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
