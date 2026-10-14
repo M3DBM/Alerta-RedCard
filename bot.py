@@ -4,7 +4,7 @@ from flask import Flask
 TOKEN = os.environ.get("TOKEN") or os.environ.get("BOT_TOKEN")
 CANAL = os.environ.get("CANAL")
 
-LIGAS = ["bra.1","eng.1","esp.1","ita.1","ger.1","fra.1","uefa.champions","conmebol.libertadores"]
+LIGAS = ["bra.1","bra.2","eng.1","esp.1","ita.1","ger.1","fra.1","uefa.champions","conmebol.sudamericana","conmebol.libertadores"]
 enviados = set()
 
 app = Flask(__name__)
