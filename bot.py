@@ -10,23 +10,57 @@ app = Flask(__name__)
 jogos_avisados = set()
 
 def enviar_telegram(time_casa, time_fora, placar, minuto, time_cartao, tipo, liga_nome):
-    # Tag da liga pra diferenciar [CHAMPIONS] vs [U19]
     tag = f"[{liga_nome}]" if liga_nome else ""
 
     if tipo == "VERMELHO":
         icone = "🔴 RED CARD!"
-        msg = f"{time_cartao} ficou com 10 jogadores!"
+        msg_topo = f"{time_cartao} ficou com 10 jogadores!"
     else:
         icone = "🟨 AMARELO!"
-        msg = f"Teste OK! Sistema funcionando! Cartão para {time_cartao}"
+        msg_topo = f"Teste OK! Cartão para {time_cartao}"
+
+    # === LÓGICA INTELIGENTE DE OVER CONFORME PLACAR ===
+    try:
+        gols_casa, gols_fora = map(int, placar.lower().replace('x','-').split('-'))
+        total_gols = gols_casa + gols_fora
+    except:
+        total_gols = 0
+
+    time_com_10 = time_cartao
+    time_com_11 = time_fora if time_casa == time_com_10 else time_casa
+
+    if total_gols == 0:
+        oportunidades = [
+            f"- {time_com_11} vence (tem 1 a mais)",
+            f"- Over 0.5 Gols",
+            f"- Over 1.5 Gols"
+        ]
+    elif total_gols == 1:
+        oportunidades = [
+            f"- Over 1.5 Gols",
+            f"- Próximo gol: {time_com_11}",
+            f"- {time_com_11} vence"
+        ]
+    elif total_gols == 2:
+        oportunidades = [
+            f"- Over 2.5 Gols",
+            f"- Ambos marcam? SIM",
+            f"- Próximo gol: {time_com_11}"
+        ]
+    else:
+        oportunidades = [
+            f"- Over {total_gols + 0.5} Gols",
+            f"- Próximo gol: {time_com_11}",
+            f"- Over escanteios"
+        ]
+
+    lista_oportunidades = "\n".join(oportunidades)
 
     texto = f"""{icone} {tag} {time_casa} {placar} {time_fora} ({minuto}')
-{msg}
+{msg_topo}
 
 💰 OPORTUNIDADES AO VIVO:
-- Time adversário empata ou vence
-- Over 1.5 Gols
-- Próximo gol adversário"""
+{lista_oportunidades}"""
 
     try:
         requests.post(TELEGRAM_URL, data={"chat_id": CHAT_ID, "text": texto}, timeout=10)
@@ -43,17 +77,15 @@ def verificar_jogos():
             events = r.get("events", [])
 
             for event in events:
-                # Só jogos ao vivo
                 if event.get("status", {}).get("type", {}).get("state")!= "in":
                     continue
 
-                # === AQUI QUE SEPARA JOGOS COM NOME IGUAL ===
+                # === SEPARA JOGOS COM NOME IGUAL (CHAMPIONS vs U19) ===
                 try:
                     comp = event.get("competitions", [{}])[0]
-                    liga_nome = comp.get("notes", [{}])[0].get("league", {}).get("name") or \
-                                comp.get("type", {}).get("abbreviation") or \
-                                r.get("leagues", [{}])[0].get("name") or "ALL"
-                    # ID único = LIGA + ID do evento
+                    liga_nome = comp.get("type", {}).get("name") or \
+                                comp.get("notes", [{}])[0].get("league", {}).get("name") or \
+                                event.get("leagues", [{}])[0].get("name") or "ALL"
                     event_id = f"{liga_nome}_{event.get('id')}"
                 except:
                     liga_nome = "ALL"
@@ -78,37 +110,29 @@ def verificar_jogos():
                     if has_red or red > 0:
                         tipo = "VERMELHO"
                     elif yellow > 0:
-                        tipo = "AMARELO" # MODO TESTE - depois tiramos
+                        tipo = "AMARELO" # MODO TESTE
 
                     if tipo:
-                        # ID único pra não repetir o mesmo cartão
                         game_key = f"{event_id}_{team_name}_{tipo}_{yellow}_{red}"
-
                         if game_key not in jogos_avisados:
-                            print(f"Cartão: {liga_nome} - {team_name} {tipo}")
+                            print(f"NOVO: {liga_nome} - {team_name} {tipo} {placar}")
                             enviar_telegram(time_casa, time_fora, placar, minuto, team_name, tipo, liga_nome)
                             jogos_avisados.add(game_key)
 
-                            # No teste, bloqueia flood de amarelo do mesmo time
                             if tipo == "AMARELO":
                                 for i in range(1, 10):
                                     jogos_avisados.add(f"{event_id}_{team_name}_AMARELO_{i}_0")
 
             print("Verificado TODAS as ligas... 15s")
             time.sleep(15)
-
         except Exception as e:
             print(f"Erro geral: {e}")
             time.sleep(20)
 
 @app.route("/")
 def home():
-    return "Bot ON - TODAS as ligas + separa jogos iguais (Champions vs U19)"
+    return "Bot ON - Todas as ligas + separa jogos iguais + over inteligente"
 
 if __name__ == "__main__":
     threading.Thread(target=verificar_jogos, daemon=True).start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-if __name__ == "__main__":
-    t = threading.Thread(target=verificar_jogos, daemon=True)
-    t.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
